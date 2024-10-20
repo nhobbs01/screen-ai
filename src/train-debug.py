@@ -38,29 +38,28 @@ processor = PaliGemmaProcessor.from_pretrained(model_id, token=hf_token)
 dataset = load_dataset("nickhobbs09/screen-ai-annotation", token=hf_token)
 dtype = torch.bfloat16
 
-model = PaliGemmaForConditionalGeneration.from_pretrained(model_id, token=hf_token, device_map={"":0},  quantization_config=bnb_config).to(device)
+# model = PaliGemmaForConditionalGeneration.from_pretrained(model_id, token=hf_token, device_map={"":0},  quantization_config=bnb_config)
+model = PaliGemmaForConditionalGeneration.from_pretrained(model_id, torch_dtype=dtype).to(device)
 
-# Freeze vision tower
+# # Freeze vision tower
 for param in model.vision_tower.parameters():
     param.requires_grad = False
 
 # Freeze multi_modal_projector
 for param in model.multi_modal_projector.parameters():
-    param.requires_grad = False
-model = get_peft_model(model, lora_config)
+    param.requires_grad = True
+    
+# model = get_peft_model(model, lora_config)
+# model.print_trainable_parameters()
 
-model.print_trainable_parameters()
-
-
- 
 train_ds = dataset['train']
 val_ds = dataset['test']
 PROMPT = "Summarize"
 
-# FOR DEBUGGING
-NUM_SAMPLES = 10
+# # FOR DEBUGGING
+NUM_SAMPLES = 16*64*2
 train_ds = train_ds.select(range(NUM_SAMPLES))
-val_ds = val_ds.select(range(NUM_SAMPLES))
+# val_ds = val_ds.select(range(NUM_SAMPLES))
 # -----------------------------------------
 
 def collate_fn(examples):
@@ -70,7 +69,7 @@ def collate_fn(examples):
 
     tokens = processor(text=texts, images=images, suffix=labels,
                     return_tensors="pt", padding="longest")
-    tokens = tokens.to(device)
+    tokens = tokens.to(dtype).to(device)
     # inputs = {"input_ids": tokens.input_ids, "attention_mask": tokens.attention_mask, "labels": tokens.labels}
     return tokens
 
@@ -96,30 +95,37 @@ annotation1 = train_ds[0]['screen_annotation']
 
 model.train()
 
-# Simple training loop
-for i in range(5):
-    tokens = collate_fn([train_ds[0]])
-    tokens = tokens.to(device)
+# # Simple training loop
+for i, tokens in enumerate(train_dataloader):
     optimizer.zero_grad()
     outputs = model(**tokens)
     loss = outputs.loss
     loss.backward()
     optimizer.step()
     lr_scheduler.step()
+    if i % 256 == 0:
+        print("Pushing to hub...")
+        model.push_to_hub("nickhobbs09/screen-ai-annotation-finetuned-paligemma-3b-pt-224", private=True, token=hf_token)
     print(f'step {i: 5d} | loss: {loss.item():.6f}')
 
+print("Pushing to hub...")
+model.push_to_hub("nickhobbs09/screen-ai-annotation-finetuned-paligemma-3b-pt-224", private=True)
 
-# Make a prediction
-model.eval()
-input = processor(images=image1, text="Summarize", return_tensors="pt").to(device)
-output = model.generate(**input, max_new_tokens=256)
-print(processor.decode(output[0], skip_special_tokens=True))
+# # Make a prediction
+# model.eval()
+# for i, data in enumerate(val_ds.select(range(3))):
+#     image = data['image']
+#     image.save(f"./val_data/val_image_{i}.png")
+#     annotation = data['screen_annotation']
+#     input = processor(images=image, text="Summarize", return_tensors="pt").to(device)
+#     output = model.generate(**input, max_new_tokens=256)
+#     print(processor.decode(output[0], skip_special_tokens=True))
 
-import sys; sys.exit()
+
+# import sys; sys.exit()
 
 # # Example training loop
-# for batch in iter_dataloader:
-# for i in range(5):
+# for i, tokens in enumerate(train_dataloader):
 #   t0 = time.time()
 #   # Model Optimization
 #   model.train()
@@ -127,9 +133,6 @@ import sys; sys.exit()
 #   loss_accum = 0
 #   num_tokens = 0
 #   for j in range(grad_accum_steps):
-#     # tokens = batch
-#     tokens = collate_fn([train_ds[0]])
-#     tokens = tokens.to(device)
 #     outputs = model(**tokens)
 #     loss = outputs.loss
 #     loss = loss / grad_accum_steps
@@ -146,13 +149,13 @@ import sys; sys.exit()
 #   dt = (t1-t0) * 1000
 #   print(f'step {i: 5d} | loss: {loss_accum.item():.6f} | time: {dt:.2f}ms | tokens_per_sec: {num_tokens / dt:.2f} | lr: {lr}')
 
-model.eval()
+# print("Pushing to hub...")
+# model.push_to_hub("nickhobbs09/screen-ai-annotation-finetuned-paligemma-3b-pt-224", private=True)
+# model.eval()
+# input = processor(images=image1, text="Summarize", return_tensors="pt").to(device)
+# output = model.generate(**input, max_new_tokens=256)
+# print(processor.decode(output[0], skip_special_tokens=True))
 
-input = processor(images=image1, text="Summarize", return_tensors="pt").to(device)
-output = model.generate(**input, max_new_tokens=256)
-print(processor.decode(output[0], skip_special_tokens=True))
-
-print("Pushing to hub...")
 # model.push_to_hub("nickhobbs09/screen-ai-annotation-finetuned-paligemma-3b-pt-224", use_auth_token=hf_token)
 
 # args=TrainingArguments(
