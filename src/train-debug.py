@@ -32,7 +32,7 @@ lora_config = LoraConfig(
 
 # -----------------------------------------
 
-hf_token = "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"
+hf_token = ""
 model_id = "google/paligemma-3b-pt-224"
 processor = PaliGemmaProcessor.from_pretrained(model_id, token=hf_token)
 dataset = load_dataset("nickhobbs09/screen-ai-annotation", token=hf_token)
